@@ -445,22 +445,35 @@ impl PropFindRequestHandler for Server {
                             .changes(account_id, sync_collection, Query::Since(id))
                             .await
                             .caused_by(trc::location!())?;
+                        let mut vanished: Vec<String> = Vec::new();
 
                         // Merge changes
                         let mut total_changes = 0;
+                        let mut maybe_has_vanished = false;
                         if container_has_children {
                             let mut container_changes = RoaringBitmap::new();
                             let mut item_changes = RoaringBitmap::new();
 
                             for change in changes.changes {
                                 match change {
-                                    Change::InsertItem(id) | Change::UpdateItem(id) => {
+                                    Change::InsertItem(id) => {
                                         item_changes.insert(id as u32);
                                     }
-                                    Change::InsertContainer(id) | Change::UpdateContainer(id) => {
+                                    Change::UpdateItem(id) => {
+                                        maybe_has_vanished = true;
+                                        item_changes.insert(id as u32);
+                                    }
+                                    Change::InsertContainer(id) => {
                                         container_changes.insert(id as u32);
                                     }
-                                    _ => (),
+                                    Change::UpdateContainer(id) => {
+                                        maybe_has_vanished = true;
+                                        container_changes.insert(id as u32);
+                                    }
+                                    Change::DeleteContainer(_) | Change::DeleteItem(_) => {
+                                        maybe_has_vanished = true;
+                                    }
+                                    Change::UpdateContainerProperty(_) => (),
                                 }
                             }
 
@@ -479,10 +492,17 @@ impl PropFindRequestHandler for Server {
                         } else {
                             let changes = RoaringBitmap::from_iter(
                                 changes.changes.iter().filter_map(|change| match change {
-                                    Change::InsertItem(id)
-                                    | Change::UpdateItem(id)
-                                    | Change::InsertContainer(id)
-                                    | Change::UpdateContainer(id) => Some(*id as u32),
+                                    Change::InsertItem(id) | Change::InsertContainer(id) => {
+                                        Some(*id as u32)
+                                    }
+                                    Change::UpdateItem(id) | Change::UpdateContainer(id) => {
+                                        maybe_has_vanished = true;
+                                        Some(*id as u32)
+                                    }
+                                    Change::DeleteContainer(_) | Change::DeleteItem(_) => {
+                                        maybe_has_vanished = true;
+                                        None
+                                    }
                                     _ => None,
                                 }),
                             );
@@ -495,10 +515,40 @@ impl PropFindRequestHandler for Server {
                             }
                         }
 
+                        if maybe_has_vanished {
+                            vanished = self
+                                .store()
+                                .vanished(
+                                    account_id,
+                                    sync_collection.vanished_collection().unwrap(),
+                                    Query::Since(id),
+                                )
+                                .await
+                                .caused_by(trc::location!())?;
+                            total_changes += vanished.len();
+                        }
+
                         // Truncate changes
                         if total_changes > limit {
                             let mut offset = limit * seq as usize;
                             let mut total_changes = 0;
+
+                            // Add vanished items to response
+                            for item in vanished {
+                                if offset > 0 {
+                                    offset -= 1;
+                                } else if total_changes < limit {
+                                    response.add_response(Response::new_status(
+                                        [item],
+                                        StatusCode::NOT_FOUND,
+                                    ));
+                                    total_changes += 1;
+                                } else {
+                                    is_sync_limited = true;
+                                }
+                            }
+
+                            // Add items to document set
                             for document_ids in [&mut display_containers, &mut display_children]
                                 .into_iter()
                                 .flatten()
@@ -519,6 +569,14 @@ impl PropFindRequestHandler for Server {
 
                             if is_sync_limited {
                                 response.set_sync_token(Urn::Sync { id, seq: seq + 1 }.to_string());
+                            }
+                        } else {
+                            // Add vanished items to response
+                            for item in vanished {
+                                response.add_response(Response::new_status(
+                                    [item],
+                                    StatusCode::NOT_FOUND,
+                                ));
                             }
                         }
 
@@ -876,9 +934,15 @@ impl PropFindRequestHandler for Server {
                         }
                         WebDavProperty::GetCTag => {
                             if item.is_container {
+                                let ctag = data
+                                    .resources(self, access_token, account_id, sync_collection)
+                                    .await
+                                    .caused_by(trc::location!())?
+                                    .highest_change_id;
+
                                 fields.push(DavPropertyValue::new(
                                     property.clone(),
-                                    DavValue::String(archive_.ctag()),
+                                    DavValue::String(format!("\"{ctag}\"")),
                                 ));
                             } else {
                                 fields_not_found.push(DavPropertyValue::empty(property.clone()));
@@ -1191,6 +1255,9 @@ impl PropFindRequestHandler for Server {
                                 DavValue::CData(serialize_vcard_with_props(
                                     &card.inner.card,
                                     items,
+                                    query
+                                        .max_vcard_version
+                                        .or_else(|| card.inner.card.version()),
                                 )),
                             ));
                         }

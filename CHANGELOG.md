@@ -2,9 +2,51 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.12.3] - 2025-05-30
+
+If you are upgrading from v0.11.x, this version includes **breaking changes** to the database layout and requires a migration. Please read the [UPGRADING.md](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING.md) file for more information on how to upgrade from previous versions.
+
+## Added
+- Store vanished IMAP UIDs and WebDAV paths in the changelog.
+
+## Changed
+
+## Fixed
+- XML `CDATA` injection (credits to @andreymal for the report).
+- Macro references are replaced with their content when writing config file (#1595).
+- Double nested CalDAV and CardDAV property tags (#1591).
+- Allow empty properties in PROPPATCH requests (#1580).
+
+## [0.12.2] - 2025-05-27
+
+If you are upgrading from v0.11.x, this version includes **breaking changes** to the database layout and requires a migration. Please read the [UPGRADING.md](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING.md) file for more information on how to upgrade from previous versions.
+
+## Added
+- CardDAV: Legacy vCard 2.1 and 3.0 serialization support.
+- WebDAV: Add SRV Records to help DAV autodiscovery (closes #1565).
+
+## Changed
+
+## Fixed
+- Report list attempts to deserialize empty values (#1562)
+- Refresh expired FoundationDB transactions while retrieving large blobs (#1555).
+
+## [0.12.1] - 2025-05-26
+
+If you are upgrading from v0.11.x, this version includes **breaking changes** to the database layout and requires a migration. Please read the [UPGRADING.md](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING.md) file for more information on how to upgrade from previous versions.
+
+## Added
+
+## Changed
+
+## Fixed
+- Migration tool to generate the correct next id (#1561).
+- Failed to parse setting dav.lock.max-timeout (closes #1559).
+- Failed to build OpenTelemetry span exporter: no http client specified (#1571).
+
 ## [0.12.0] - 2025-05-26
 
-This version includes **breaking changes** to the database layout and requires a migration. Please read the [UPGRADING.md](UPGRADING.md) file for more information on how to upgrade from previous versions.
+This version includes **breaking changes** to the database layout and requires a migration. Please read the [UPGRADING.md](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING.md) file for more information on how to upgrade from previous versions.
 
 ### Added
 - [Collaboration](https://stalw.art/docs/collaboration/overview) features including [Calendars over CalDAV](https://stalw.art/docs/http/calendar/), [Contacts over CardDAV](https://stalw.art/docs/http/contact/) and [File Storage over WebDAV](https://stalw.art/docs/http/file-storage/).

@@ -323,29 +323,26 @@ pub async fn test(test: &WebDavTest) {
                             CalDavProperty::SupportedCalendarComponentSet,
                         ))
                         .with_values([
-                            "A:supported-calendar-component-set.A:comp.[name]:VAVAILABILITY",
-                            "A:supported-calendar-component-set.A:comp.[name]:AVAILABLE",
-                            "A:supported-calendar-component-set.A:comp.[name]:VRESOURCE",
-                            "A:supported-calendar-component-set.A:comp.[name]:VTODO",
-                            "A:supported-calendar-component-set.A:comp.[name]:DAYLIGHT",
-                            "A:supported-calendar-component-set.A:comp.[name]:STANDARD",
-                            "A:supported-calendar-component-set.A:comp.[name]:VLOCATION",
-                            "A:supported-calendar-component-set.A:comp.[name]:VTIMEZONE",
-                            "A:supported-calendar-component-set.A:comp.[name]:VFREEBUSY",
-                            "A:supported-calendar-component-set.A:comp.[name]:VEVENT",
-                            "A:supported-calendar-component-set.A:comp.[name]:VJOURNAL",
-                            "A:supported-calendar-component-set.A:comp.[name]:PARTICIPANT",
-                            "A:supported-calendar-component-set.A:comp.[name]:VALARM",
+                            "A:comp.[name]:VAVAILABILITY",
+                            "A:comp.[name]:AVAILABLE",
+                            "A:comp.[name]:VRESOURCE",
+                            "A:comp.[name]:VTODO",
+                            "A:comp.[name]:DAYLIGHT",
+                            "A:comp.[name]:STANDARD",
+                            "A:comp.[name]:VLOCATION",
+                            "A:comp.[name]:VTIMEZONE",
+                            "A:comp.[name]:VFREEBUSY",
+                            "A:comp.[name]:VEVENT",
+                            "A:comp.[name]:VJOURNAL",
+                            "A:comp.[name]:PARTICIPANT",
+                            "A:comp.[name]:VALARM",
                         ]);
                     properties
                         .get(DavProperty::CalDav(CalDavProperty::SupportedCalendarData))
                         .with_values([
-                            concat!(
-                                "A:supported-calendar-data.A:calendar-data-type.",
-                                "[content-type]:text/calendar"
-                            ),
-                            "A:supported-calendar-data.A:calendar-data-type.[version]:2.0",
-                            "A:supported-calendar-data.A:calendar-data-type.[version]:1.0",
+                            concat!("A:calendar-data-type.", "[content-type]:text/calendar"),
+                            "A:calendar-data-type.[version]:2.0",
+                            "A:calendar-data-type.[version]:1.0",
                         ]);
                     properties
                         .get(DavProperty::CalDav(CalDavProperty::SupportedCollationSet))
@@ -382,13 +379,10 @@ pub async fn test(test: &WebDavTest) {
                         properties
                             .get(DavProperty::CardDav(CardDavProperty::SupportedAddressData))
                             .with_values([
-                                concat!(
-                                    "B:supported-address-data.B:address-data-type.",
-                                    "[content-type]:text/vcard"
-                                ),
-                                "B:supported-address-data.B:address-data-type.[version]:3.0",
-                                "B:supported-address-data.B:address-data-type.[version]:4.0",
-                                "B:supported-address-data.B:address-data-type.[version]:2.1",
+                                concat!("B:address-data-type.", "[content-type]:text/vcard"),
+                                "B:address-data-type.[version]:3.0",
+                                "B:address-data-type.[version]:4.0",
+                                "B:address-data-type.[version]:2.1",
                             ]);
                         properties
                             .get(DavProperty::CardDav(CardDavProperty::SupportedCollationSet))
@@ -710,7 +704,11 @@ pub struct DavItem {
 }
 
 #[derive(Debug, serde::Serialize)]
-pub struct DavProperties(Vec<DavItem>);
+pub struct DavProperties {
+    #[serde(skip)]
+    status: StatusCode,
+    props: Vec<DavItem>,
+}
 
 impl DavMultiStatus {
     pub fn properties(&self, href: &str) -> DavPropertyResult<'_> {
@@ -752,7 +750,7 @@ impl DavPropertyResult<'_> {
     pub fn get(&self, name: impl AsRef<str>) -> DavQueryResult<'_> {
         let name = name.as_ref();
         self.properties
-            .0
+            .props
             .iter()
             .find_map(|prop| {
                 prop.values.get(name).map(|values| DavQueryResult {
@@ -765,15 +763,26 @@ impl DavPropertyResult<'_> {
                 self.response.dump_response();
                 panic!(
                     "No property found for name: {name} in {}",
-                    serde_json::to_string_pretty(&self.properties.0).unwrap()
+                    serde_json::to_string_pretty(&self.properties.props).unwrap()
                 )
             })
+    }
+
+    pub fn with_status(&self, status: StatusCode) -> &Self {
+        if self.properties.status != status {
+            self.response.dump_response();
+            panic!(
+                "Expected status {status}, but got {}",
+                self.properties.status
+            );
+        }
+        self
     }
 
     pub fn is_defined(&self, name: impl AsRef<str>) -> &Self {
         if self
             .properties
-            .0
+            .props
             .iter()
             .any(|prop| prop.values.contains_key(name.as_ref()))
         {
@@ -787,7 +796,7 @@ impl DavPropertyResult<'_> {
     pub fn is_undefined(&self, name: impl AsRef<str>) -> &Self {
         if self
             .properties
-            .0
+            .props
             .iter()
             .any(|prop| prop.values.contains_key(name.as_ref()))
         {
@@ -931,6 +940,7 @@ impl DavResponse {
             hrefs: AHashMap::new(),
         };
         let mut href = None;
+        let mut href_status = StatusCode::OK;
         let mut props = Vec::new();
         let mut prop = DavItem::default();
 
@@ -941,11 +951,24 @@ impl DavResponse {
                         if !prop.is_empty() {
                             props.push(std::mem::take(&mut prop));
                         }
-                        result
-                            .hrefs
-                            .insert(href, DavProperties(std::mem::take(&mut props)));
+                        result.hrefs.insert(
+                            href,
+                            DavProperties {
+                                status: href_status,
+                                props: std::mem::take(&mut props),
+                            },
+                        );
+                        href_status = StatusCode::OK;
                     }
                     href = Some(value.to_string());
+                }
+                "D:multistatus.D:response.D:status" => {
+                    href_status = value
+                        .split_ascii_whitespace()
+                        .nth(1)
+                        .unwrap_or_default()
+                        .parse()
+                        .unwrap();
                 }
                 "D:multistatus.D:response.D:propstat.D:status" => {
                     prop.status = value
@@ -958,7 +981,6 @@ impl DavResponse {
                 "D:multistatus.D:response.D:propstat.D:responsedescription" => {
                     prop.description = Some(value.to_string());
                 }
-
                 _ => {
                     if let Some(prop_name) =
                         key.strip_prefix("D:multistatus.D:response.D:propstat.D:prop.")
@@ -990,7 +1012,13 @@ impl DavResponse {
             if !prop.is_empty() {
                 props.push(prop);
             }
-            result.hrefs.insert(href, DavProperties(props));
+            result.hrefs.insert(
+                href,
+                DavProperties {
+                    status: href_status,
+                    props,
+                },
+            );
         }
 
         result
